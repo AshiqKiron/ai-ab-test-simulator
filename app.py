@@ -1,3 +1,14 @@
+
+import streamlit as st
+import pandas as pd
+import gspread
+import json
+import time
+import numpy as np
+from scipy import stats
+from openai import OpenAI
+from datetime import datetime
+
 try:
     import gspread, json
     gc = gspread.service_account_from_dict(st.secrets["gsheets"])
@@ -9,15 +20,6 @@ except Exception as e:
         st.json(e.response.json())  # Shows exact Google API error
     st.stop()
     
-import streamlit as st
-import pandas as pd
-import gspread
-import json
-import time
-import numpy as np
-from scipy import stats
-from openai import OpenAI
-from datetime import datetime
 
 # --- 1. CONFIG & SECRETS ---
 @st.cache_resource
