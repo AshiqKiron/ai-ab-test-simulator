@@ -30,12 +30,27 @@ with st.sidebar:
     st.header("🔐 System Health Check")
     
     # Test Google Sheets
+    with st.sidebar:
+    st.header("🔐 System Health Check")
+    
     if st.button("Test Google Sheets"):
         try:
             sh = get_gsheet()
             st.success(f"✅ Sheet: {sh.title}")
-            tabs = [w.title for w in sh.workheets()]
-            st.write("Tabs:", tabs)
+            
+            # ✅ VERSION-SAFE WORKSHEET DETECTION
+            try:
+                tabs = [w.title for w in sh.worksheets()]          # gspread v5.x
+            except AttributeError:
+                tabs = [w.title for w in sh.list_worksheets()]     # gspread v6.x+
+            
+            st.write("Tabs found:", tabs)
+            
+            required = ["Test_Cases", "Prompts", "Rubric", "Results"]
+            missing = [t for t in required if t not in tabs]
+            if missing:
+                st.warning(f"⚠️ Missing tabs: {missing}")
+                
         except Exception as e:
             st.error(f"❌ Sheets: {type(e).__name__}")
             st.code(str(e))
