@@ -30,13 +30,14 @@ def get_llm_client():
         return OpenAI(api_key=st.secrets["openai_key"]), "openai"
 
 # ==========================
-# 📦 SMART DATA LOADING (QUOTA-SAFE)
+# 📦 SMART DATA LOADING (QUOTA-SAFE + HASH-FIXED)
 # ==========================
-@st.cache_data(ttl=300)  # Cache data for 5 minutes to avoid repeated reads
-def load_data_cached(sheet_id, gsheets_creds):
-    """Load all sheets in ONE batch to minimize API calls"""
-    import gspread
-    gc = gspread.service_account_from_dict(gsheets_creds)
+@st.cache_data(ttl=300)  # Cache data for 5 minutes; only hashable params allowed
+def load_data_cached(sheet_id: str):
+    """Load all sheets - credentials loaded internally to avoid unhashable param error"""
+    # Load credentials INSIDE the function (not as a parameter)
+    creds = st.secrets["gsheets"]
+    gc = gspread.service_account_from_dict(creds)
     sh = gc.open_by_key(sheet_id)
     
     def safe_get_records(sheet_name):
@@ -53,7 +54,7 @@ def load_data_cached(sheet_id, gsheets_creds):
                 return safe_get_records(sheet_name)  # Retry once
             return []
     
-    # Load all 3 tabs in sequence (still counts as 3 calls, but cached for 5 min)
+    # Load all 3 tabs in sequence (cached for 5 min)
     tests = safe_get_records("Test_Cases")
     prompts = safe_get_records("Prompts")
     rubric = safe_get_records("Rubric")
@@ -61,8 +62,8 @@ def load_data_cached(sheet_id, gsheets_creds):
     return pd.DataFrame(tests), pd.DataFrame(prompts), pd.DataFrame(rubric)
 
 def load_data():
-    """Wrapper that passes secrets to cached function"""
-    return load_data_cached(st.secrets["sheet_id"], st.secrets["gsheets"])
+    """Wrapper that passes only hashable sheet_id to cached function"""
+    return load_data_cached(st.secrets["sheet_id"])
 
 # ==========================
 # 📋 SIDEBAR HEALTH CHECK
@@ -75,7 +76,7 @@ with st.sidebar:
         load_data_cached.clear()
         st.rerun()
     
-    # ✅ API USAGE INFO (NEW)
+    # ✅ API USAGE INFO
     if st.checkbox("🔍 Show API Usage"):
         st.info("Google Sheets Free Tier: 60 reads/min/user\nEach tab load = 1 read\nCache TTL = 5 min")
     
@@ -119,7 +120,7 @@ with st.sidebar:
 # ==========================
 # 🖥️ MAIN APP UI
 # ==========================
-# Load data with caching
+# Load data with caching (now hash-safe)
 tests_df, prompts_df, rubric_df = load_data()
 
 # Graceful fallback if data is missing
