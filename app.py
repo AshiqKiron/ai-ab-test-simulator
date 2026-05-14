@@ -75,6 +75,10 @@ with st.sidebar:
         load_data_cached.clear()
         st.rerun()
     
+    # ✅ API USAGE INFO (NEW)
+    if st.checkbox("🔍 Show API Usage"):
+        st.info("Google Sheets Free Tier: 60 reads/min/user\nEach tab load = 1 read\nCache TTL = 5 min")
+    
     if st.button("Test Google Sheets"):
         try:
             sh = get_gsheet()
@@ -175,7 +179,7 @@ else:
         st.success("✅ Results saved to Google Sheets")
 
 # ==========================
-# 🔄 LLM FUNCTIONS (unchanged)
+# 🔄 LLM FUNCTIONS
 # ==========================
 def run_llm(system_prompt: str, user_prompt: str, test_input: str, model: str = None) -> dict:
     client, provider = get_llm_client()
