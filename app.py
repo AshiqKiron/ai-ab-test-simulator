@@ -4,9 +4,33 @@ import pandas as pd
 import gspread
 from openai import OpenAI
 
+# At top of app.py (after imports)
+import streamlit as st
+from groq import Groq  # ← This works ONLY if 'groq' is in requirements.txt
+
+@st.cache_resource
+def get_groq_client():
+    return Groq(api_key=st.secrets["groq_key"])  # ← Key from Secrets, not code
+
+# In sidebar
+with st.sidebar:
+    if st.button("Test Groq"):
+        try:
+            client = get_groq_client()
+            resp = client.chat.completions.create(
+                model="llama3-8b-8192",
+                messages=[{"role": "user", "content": "OK"}],
+                max_tokens=5
+            )
+            st.success(f"✅ {resp.choices[0].message.content}")
+        except Exception as e:
+            st.error(f"❌ {e}")
+
 # === CONFIG ===
 st.set_page_config(page_title="AI A/B Test Simulator", layout="wide")
 st.title("🔬 AI Prompt A/B Simulator")
+
+
 
 # === CACHED CONNECTIONS ===
 @st.cache_resource
