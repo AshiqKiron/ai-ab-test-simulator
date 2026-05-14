@@ -1,5 +1,5 @@
 streamlit
-gspread
+gspread==5.12.0
 pandas
 openai
 groq          
