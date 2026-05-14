@@ -39,7 +39,6 @@ with st.sidebar:
         try:
             sh = get_gsheet()
             st.success(f"✅ Sheet: {sh.title}")
-            # Handle gspread v5.x vs v6.x API change
             try:
                 tabs = [w.title for w in sh.worksheets()]
             except AttributeError:
@@ -82,9 +81,23 @@ with st.sidebar:
 # ==========================
 def load_data():
     sh = get_gsheet()
-    tests = sh.worksheet("Test_Cases").get_all_records()
-    prompts = sh.worksheet("Prompts").get_all_records()
-    rubric = sh.worksheet("Rubric").get_all_records()
+    
+    def safe_get_records(sheet_name):
+        try:
+            ws = sh.worksheet(sheet_name)
+            values = ws.get_all_values()
+            if not values or len(values) < 2:
+                st.warning(f"⚠️ '{sheet_name}' tab is empty or missing data. Add headers + 1 row.")
+                return []
+            return ws.get_all_records()
+        except Exception as e:
+            st.error(f"❌ Failed to load '{sheet_name}': {e}")
+            return []
+
+    tests = safe_get_records("Test_Cases")
+    prompts = safe_get_records("Prompts")
+    rubric = safe_get_records("Rubric")
+    
     return pd.DataFrame(tests), pd.DataFrame(prompts), pd.DataFrame(rubric)
 
 def run_llm(system_prompt: str, user_prompt: str, test_input: str, model: str = None) -> dict:
@@ -124,7 +137,6 @@ Output to score: {llm_output}"""
             max_tokens=200
         )
         raw = res.choices[0].message.content.strip()
-        # Clean markdown formatting if LLM wraps in ```json
         cleaned = raw.replace("```json", "").replace("```", "").strip()
         scores = json.loads(cleaned)
         
@@ -139,8 +151,9 @@ Output to score: {llm_output}"""
 # ==========================
 tests_df, prompts_df, rubric_df = load_data()
 
+# Graceful fallback if sheet tabs are still empty
 if prompts_df.empty or tests_df.empty:
-    st.warning("⚠️ No data found in Google Sheets. Please populate 'Test_Cases' and 'Prompts' tabs.")
+    st.warning("⚠️ No test cases or prompts found. Please populate 'Test_Cases' and 'Prompts' tabs in Google Sheets with headers and at least 1 row of data.")
 else:
     col1, col2 = st.columns(2)
     with col1:
