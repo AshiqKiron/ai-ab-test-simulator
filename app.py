@@ -1,3 +1,14 @@
+try:
+    import gspread, json
+    gc = gspread.service_account_from_dict(st.secrets["gsheets"])
+    sh = gc.open_by_key(st.secrets["sheet_id"])
+except Exception as e:
+    st.error("🚫 Google Auth Failed")
+    st.code(f"Error type: {type(e).__name__}\n\n{str(e)}", language="text")
+    if hasattr(e, 'response'):
+        st.json(e.response.json())  # Shows exact Google API error
+    st.stop()
+    
 import streamlit as st
 import pandas as pd
 import gspread
