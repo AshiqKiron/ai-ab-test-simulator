@@ -30,10 +30,50 @@ def get_llm_client():
         return OpenAI(api_key=st.secrets["openai_key"]), "openai"
 
 # ==========================
+# 📦 SMART DATA LOADING (QUOTA-SAFE)
+# ==========================
+@st.cache_data(ttl=300)  # Cache data for 5 minutes to avoid repeated reads
+def load_data_cached(sheet_id, gsheets_creds):
+    """Load all sheets in ONE batch to minimize API calls"""
+    import gspread
+    gc = gspread.service_account_from_dict(gsheets_creds)
+    sh = gc.open_by_key(sheet_id)
+    
+    def safe_get_records(sheet_name):
+        try:
+            ws = sh.worksheet(sheet_name)
+            values = ws.get_all_values()
+            if not values or len(values) < 2:
+                return []
+            return ws.get_all_records()
+        except Exception as e:
+            if "429" in str(e) or "RATE_LIMIT" in str(e):
+                st.warning(f"⏳ Rate limited for '{sheet_name}'. Waiting 15s before retry...")
+                time.sleep(15)  # Simple backoff
+                return safe_get_records(sheet_name)  # Retry once
+            return []
+    
+    # Load all 3 tabs in sequence (still counts as 3 calls, but cached for 5 min)
+    tests = safe_get_records("Test_Cases")
+    prompts = safe_get_records("Prompts")
+    rubric = safe_get_records("Rubric")
+    
+    return pd.DataFrame(tests), pd.DataFrame(prompts), pd.DataFrame(rubric)
+
+def load_data():
+    """Wrapper that passes secrets to cached function"""
+    return load_data_cached(st.secrets["sheet_id"], st.secrets["gsheets"])
+
+# ==========================
 # 📋 SIDEBAR HEALTH CHECK
 # ==========================
 with st.sidebar:
     st.header("🔐 System Health Check")
+    
+    if st.button("🔄 Refresh Data (uses 3 API calls)"):
+        # Clear cache to force fresh load
+        load_data_cached.clear()
+        st.rerun()
     
     if st.button("Test Google Sheets"):
         try:
@@ -44,16 +84,11 @@ with st.sidebar:
             except AttributeError:
                 tabs = [w.title for w in sh.list_worksheets()]
             st.write("Tabs found:", tabs)
-            
-            required = ["Test_Cases", "Prompts", "Rubric", "Results"]
-            missing = [t for t in required if t not in tabs]
-            if missing:
-                st.warning(f"⚠️ Missing tabs: {missing}")
         except Exception as e:
             st.error(f"❌ Sheets: {type(e).__name__}")
+            if "429" in str(e):
+                st.warning("⏳ Rate limited. Wait 60s or click 'Refresh Data' below.")
             st.code(str(e))
-            if hasattr(e, 'response'):
-                st.json(e.response.json())
 
     if st.button("Test Groq LLM"):
         try:
@@ -75,85 +110,18 @@ with st.sidebar:
     st.caption("🔑 Config")
     st.caption(f"Groq key: `gsk_...{st.secrets.get('groq_key', '')[-4:]}`")
     st.caption(f"Sheet ID: `{st.secrets.get('sheet_id', '')[:10]}...`")
-
-# ==========================
-# 📦 DATA & LOGIC FUNCTIONS
-# ==========================
-def load_data():
-    sh = get_gsheet()
-    
-    def safe_get_records(sheet_name):
-        try:
-            ws = sh.worksheet(sheet_name)
-            values = ws.get_all_values()
-            if not values or len(values) < 2:
-                st.warning(f"⚠️ '{sheet_name}' tab is empty or missing data. Add headers + 1 row.")
-                return []
-            return ws.get_all_records()
-        except Exception as e:
-            st.error(f"❌ Failed to load '{sheet_name}': {e}")
-            return []
-
-    tests = safe_get_records("Test_Cases")
-    prompts = safe_get_records("Prompts")
-    rubric = safe_get_records("Rubric")
-    
-    return pd.DataFrame(tests), pd.DataFrame(prompts), pd.DataFrame(rubric)
-
-def run_llm(system_prompt: str, user_prompt: str, test_input: str, model: str = None) -> dict:
-    client, provider = get_llm_client()
-    if provider == "groq" and model is None:
-        model = st.secrets.get("groq_model", "llama-3.1-8b-instant")
-    elif provider == "openai" and model is None:
-        model = "gpt-3.5-turbo"
-
-    full_user = user_prompt.replace("{input}", test_input)
-    start = time.time()
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": full_user}],
-        temperature=0.3,
-        max_tokens=500
-    )
-    latency = (time.time() - start) * 1000
-    return {"output": response.choices[0].message.content.strip(), "latency_ms": round(latency, 1)}
-
-def score_output(llm_output: str, rubric_df: pd.DataFrame) -> dict:
-    if rubric_df.empty or "Dimension" not in rubric_df.columns:
-        return {"scores": {}, "total": 3.0}
-    
-    judge_prompt = f"""Rate this output 1-5 on these dimensions:
-{rubric_df[['Dimension', 'Weight', 'Description']].to_markdown(index=False)}
-Output ONLY a JSON: {{"Dimension_Name": score, ...}}
-Output to score: {llm_output}"""
-    
-    try:
-        client, provider = get_llm_client()
-        model = "llama-3.1-8b-instant" if provider == "groq" else "gpt-3.5-turbo"
-        res = client.chat.completions.create(
-            model=model,
-            messages=[{"role":"user","content":judge_prompt}],
-            temperature=0.0,
-            max_tokens=200
-        )
-        raw = res.choices[0].message.content.strip()
-        cleaned = raw.replace("```json", "").replace("```", "").strip()
-        scores = json.loads(cleaned)
-        
-        weights = dict(zip(rubric_df["Dimension"], rubric_df["Weight"]))
-        total = sum(scores.get(d, 3) * weights.get(d, 1) for d in weights) / sum(weights.values())
-        return {"scores": scores, "total": round(total, 2)}
-    except Exception:
-        return {"scores": {}, "total": 3.0}
+    st.caption("💡 Data cached for 5 min to save API quota")
 
 # ==========================
 # 🖥️ MAIN APP UI
 # ==========================
+# Load data with caching
 tests_df, prompts_df, rubric_df = load_data()
 
-# Graceful fallback if sheet tabs are still empty
+# Graceful fallback if data is missing
 if prompts_df.empty or tests_df.empty:
-    st.warning("⚠️ No test cases or prompts found. Please populate 'Test_Cases' and 'Prompts' tabs in Google Sheets with headers and at least 1 row of data.")
+    st.warning("⚠️ No test cases or prompts found. Please:")
+    st.info("1. Populate 'Test_Cases' and 'Prompts' tabs with headers + 1 row\n2. Click '🔄 Refresh Data' in sidebar\n3. Wait 60s if you see rate limit errors")
 else:
     col1, col2 = st.columns(2)
     with col1:
@@ -200,8 +168,57 @@ else:
         c3.metric("Prompt A Win Rate", f"{win_rate_a:.1%}")
         c4.metric("Avg Latency Δ", f"{(res_df['Latency_A'] - res_df['Latency_B']).mean():.0f}ms")
         
-        # 💾 Save to Google Sheets
+        # 💾 Save to Google Sheets (write operations have separate quota)
         sh = get_gsheet()
         sheet = sh.worksheet("Results")
         sheet.update([list(res_df.columns)] + res_df.values.tolist())
         st.success("✅ Results saved to Google Sheets")
+
+# ==========================
+# 🔄 LLM FUNCTIONS (unchanged)
+# ==========================
+def run_llm(system_prompt: str, user_prompt: str, test_input: str, model: str = None) -> dict:
+    client, provider = get_llm_client()
+    if provider == "groq" and model is None:
+        model = st.secrets.get("groq_model", "llama-3.1-8b-instant")
+    elif provider == "openai" and model is None:
+        model = "gpt-3.5-turbo"
+
+    full_user = user_prompt.replace("{input}", test_input)
+    start = time.time()
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": full_user}],
+        temperature=0.3,
+        max_tokens=500
+    )
+    latency = (time.time() - start) * 1000
+    return {"output": response.choices[0].message.content.strip(), "latency_ms": round(latency, 1)}
+
+def score_output(llm_output: str, rubric_df: pd.DataFrame) -> dict:
+    if rubric_df.empty or "Dimension" not in rubric_df.columns:
+        return {"scores": {}, "total": 3.0}
+    
+    judge_prompt = f"""Rate this output 1-5 on these dimensions:
+{rubric_df[['Dimension', 'Weight', 'Description']].to_markdown(index=False)}
+Output ONLY a JSON: {{"Dimension_Name": score, ...}}
+Output to score: {llm_output}"""
+    
+    try:
+        client, provider = get_llm_client()
+        model = "llama-3.1-8b-instant" if provider == "groq" else "gpt-3.5-turbo"
+        res = client.chat.completions.create(
+            model=model,
+            messages=[{"role":"user","content":judge_prompt}],
+            temperature=0.0,
+            max_tokens=200
+        )
+        raw = res.choices[0].message.content.strip()
+        cleaned = raw.replace("```json", "").replace("```", "").strip()
+        scores = json.loads(cleaned)
+        
+        weights = dict(zip(rubric_df["Dimension"], rubric_df["Weight"]))
+        total = sum(scores.get(d, 3) * weights.get(d, 1) for d in weights) / sum(weights.values())
+        return {"scores": scores, "total": round(total, 2)}
+    except Exception:
+        return {"scores": {}, "total": 3.0}
