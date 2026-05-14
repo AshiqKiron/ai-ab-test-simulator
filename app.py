@@ -11,9 +11,23 @@ from datetime import datetime
 # --- 1. CONFIG & SECRETS ---
 @st.cache_resource
 def get_gsheet():
-    creds = st.secrets["gsheets"]
-    gc = gspread.service_account_from_dict(creds)
-    return gc.open_by_key(st.secrets["sheet_id"])
+    try:
+        creds = st.secrets["gsheets"]
+        # Debug: Print redacted key info (never log full private_key)
+        st.write(f"🔑 Service Account: {creds.get('client_email', 'MISSING')[:30]}...")
+        st.write(f"📄 Sheet ID: {st.secrets.get('sheet_id', 'MISSING')}")
+        
+        gc = gspread.service_account_from_dict(creds)
+        sh = gc.open_by_key(st.secrets["sheet_id"])
+        st.success(f"✅ Connected to Sheet: {sh.title}")
+        return sh
+    except gspread.exceptions.APIError as e:
+        st.error(f"🚫 Google API Error: {e}")
+        st.code(str(e.response.json()), language="json")
+        raise
+    except Exception as e:
+        st.error(f"🚫 Unexpected Error: {type(e).__name__}: {e}")
+        raise
 
 @st.cache_resource
 def get_openai_client():
