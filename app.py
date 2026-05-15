@@ -30,11 +30,11 @@ def get_llm_client():
         return OpenAI(api_key=st.secrets["openai_key"]), "openai"
 
 # ==========================
-# 📦 SMART DATA LOADING (QUOTA-SAFE + HASH-FIXED)
+# 📦 SMART DATA LOADING
 # ==========================
 @st.cache_data(ttl=300)
 def load_data_cached(sheet_id: str):
-    """Load all sheets - credentials loaded internally to avoid unhashable param error"""
+    """Load all sheets - credentials loaded internally"""
     creds = st.secrets["gsheets"]
     gc = gspread.service_account_from_dict(creds)
     sh = gc.open_by_key(sheet_id)
@@ -48,7 +48,7 @@ def load_data_cached(sheet_id: str):
             return ws.get_all_records()
         except Exception as e:
             if "429" in str(e) or "RATE_LIMIT" in str(e):
-                st.warning(f"⏳ Rate limited for '{sheet_name}'. Waiting 15s before retry...")
+                st.warning(f"⏳ Rate limited for '{sheet_name}'. Waiting 15s...")
                 time.sleep(15)
                 return safe_get_records(sheet_name)
             return []
@@ -60,11 +60,10 @@ def load_data_cached(sheet_id: str):
     return pd.DataFrame(tests), pd.DataFrame(prompts), pd.DataFrame(rubric)
 
 def load_data():
-    """Wrapper that passes only hashable sheet_id to cached function"""
     return load_data_cached(st.secrets["sheet_id"])
 
 # ==========================
-# 🔄 LLM HELPER FUNCTIONS (MOVED UP - MUST BE DEFINED BEFORE USE)
+# 🔄 LLM HELPER FUNCTIONS
 # ==========================
 def run_llm(system_prompt: str, user_prompt: str, test_input: str, model: str = None) -> dict:
     client, provider = get_llm_client()
@@ -85,17 +84,29 @@ def run_llm(system_prompt: str, user_prompt: str, test_input: str, model: str = 
     return {"output": response.choices[0].message.content.strip(), "latency_ms": round(latency, 1)}
 
 def score_output(llm_output: str, rubric_df: pd.DataFrame) -> dict:
-    if rubric_df.empty or "Dimension" not in rubric_df.columns:
+    # 1. Handle empty dataframe
+    if rubric_df.empty:
         return {"scores": {}, "total": 3.0}
+
+    # 2. FIX: Clean column names (remove accidental spaces like "Dimension ")
+    rubric_df.columns = rubric_df.columns.str.strip()
     
-    judge_prompt = f"""Rate this output 1-5 on these dimensions:
+    # 3. Check for required columns safely
+    required = ['Dimension', 'Weight', 'Description']
+    if not all(col in rubric_df.columns for col in required):
+        # Fallback if Rubric tab is missing data or has wrong headers
+        return {"scores": {}, "total": 3.0}
+
+    # 4. Proceed with scoring logic
+    try:
+        judge_prompt = f"""Rate this output 1-5 on these dimensions:
 {rubric_df[['Dimension', 'Weight', 'Description']].to_markdown(index=False)}
 Output ONLY a JSON: {{"Dimension_Name": score, ...}}
 Output to score: {llm_output}"""
-    
-    try:
+        
         client, provider = get_llm_client()
         model = "llama-3.1-8b-instant" if provider == "groq" else "gpt-3.5-turbo"
+        
         res = client.chat.completions.create(
             model=model,
             messages=[{"role":"user","content":judge_prompt}],
@@ -118,12 +129,12 @@ Output to score: {llm_output}"""
 with st.sidebar:
     st.header("🔐 System Health Check")
     
-    if st.button("🔄 Refresh Data (uses 3 API calls)"):
+    if st.button("🔄 Refresh Data"):
         load_data_cached.clear()
         st.rerun()
     
     if st.checkbox("🔍 Show API Usage"):
-        st.info("Google Sheets Free Tier: 60 reads/min/user\nEach tab load = 1 read\nCache TTL = 5 min")
+        st.info("Google Sheets: 60 reads/min/user\nCache TTL = 5 min")
     
     if st.button("Test Google Sheets"):
         try:
@@ -133,44 +144,42 @@ with st.sidebar:
                 tabs = [w.title for w in sh.worksheets()]
             except AttributeError:
                 tabs = [w.title for w in sh.list_worksheets()]
-            st.write("Tabs found:", tabs)
+            st.write("Tabs:", tabs)
         except Exception as e:
-            st.error(f"❌ Sheets: {type(e).__name__}")
-            if "429" in str(e):
-                st.warning("⏳ Rate limited. Wait 60s or click 'Refresh Data' below.")
-            st.code(str(e))
+            st.error(f"❌ Sheets: {e}")
 
     if st.button("Test Groq LLM"):
         try:
             client, provider = get_llm_client()
             model = st.secrets.get("groq_model", "llama-3.1-8b-instant")
-            st.info(f"Provider: {provider} | Model: {model}")
             resp = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": "Reply ONLY: OK"}],
-                max_tokens=5,
-                temperature=0
+                max_tokens=5
             )
-            st.success(f"✅ Response: `{resp.choices[0].message.content.strip()}`")
+            st.success(f"✅ LLM: {resp.choices[0].message.content.strip()}")
         except Exception as e:
-            st.error(f"❌ LLM: {type(e).__name__}")
-            st.code(str(e))
+            st.error(f"❌ LLM: {e}")
 
     st.divider()
-    st.caption("🔑 Config")
-    st.caption(f"Groq key: `gsk_...{st.secrets.get('groq_key', '')[-4:]}`")
     st.caption(f"Sheet ID: `{st.secrets.get('sheet_id', '')[:10]}...`")
-    st.caption("💡 Data cached for 5 min to save API quota")
 
 # ==========================
-# 🖥️ MAIN APP UI (NOW FUNCTIONS ARE DEFINED ABOVE ✅)
+# 🖥️ MAIN APP UI
 # ==========================
 tests_df, prompts_df, rubric_df = load_data()
 
 if prompts_df.empty or tests_df.empty:
-    st.warning("⚠️ No test cases or prompts found. Please:")
-    st.info("1. Populate 'Test_Cases' and 'Prompts' tabs with headers + 1 row\n2. Click '🔄 Refresh Data' in sidebar\n3. Wait 60s if you see rate limit errors")
+    st.warning("⚠️ No data found. Please populate 'Test_Cases' and 'Prompts' tabs with headers + 1 row.")
 else:
+    # Clean Prompt headers if needed
+    prompts_df.columns = prompts_df.columns.str.strip()
+    
+    # Ensure required columns exist in Prompts
+    if 'Prompt_ID' not in prompts_df.columns:
+        st.error("❌ Missing 'Prompt_ID' column in Prompts tab.")
+        st.stop()
+
     col1, col2 = st.columns(2)
     with col1:
         prompt_a = st.selectbox("Prompt A", prompts_df["Prompt_ID"].tolist())
@@ -183,10 +192,14 @@ else:
         results = []
         
         for i, row in tests_df.iterrows():
-            pa = prompts_df[prompts_df["Prompt_ID"] == prompt_a].iloc[0]
-            pb = prompts_df[prompts_df["Prompt_ID"] == prompt_b].iloc[0]
+            # Safe access to Prompt data
+            try:
+                pa = prompts_df[prompts_df["Prompt_ID"] == prompt_a].iloc[0]
+                pb = prompts_df[prompts_df["Prompt_ID"] == prompt_b].iloc[0]
+            except IndexError:
+                st.error(f"Prompt ID not found: {prompt_a} or {prompt_b}")
+                st.stop()
             
-            # ✅ Now run_llm is defined above, so this works!
             out_a = run_llm(pa["System_Prompt"], pa["User_Prompt_Template"], row["Input_Text"])
             out_b = run_llm(pb["System_Prompt"], pb["User_Prompt_Template"], row["Input_Text"])
             
@@ -194,7 +207,7 @@ else:
             score_b = score_output(out_b["output"], rubric_df)
             
             results.append({
-                "Run_ID": run_id, "Test_ID": row["ID"],
+                "Run_ID": run_id, "Test_ID": row.get("ID", i),
                 "Prompt_A": prompt_a, "Output_A": out_a["output"], "Score_A": score_a["total"],
                 "Prompt_B": prompt_b, "Output_B": out_b["output"], "Score_B": score_b["total"],
                 "Latency_A": out_a["latency_ms"], "Latency_B": out_b["latency_ms"],
@@ -207,8 +220,8 @@ else:
         
         # 📊 Statistics
         delta = res_df["Score_A"] - res_df["Score_B"]
-        t_stat, p_val = stats.ttest_1samp(delta, 0)
         win_rate_a = (res_df["Score_A"] > res_df["Score_B"]).mean()
+        t_stat, p_val = stats.ttest_1samp(delta, 0)
         
         st.subheader("📊 A/B Results Dashboard")
         c1, c2, c3, c4 = st.columns(4)
@@ -218,7 +231,10 @@ else:
         c4.metric("Avg Latency Δ", f"{(res_df['Latency_A'] - res_df['Latency_B']).mean():.0f}ms")
         
         # 💾 Save to Google Sheets
-        sh = get_gsheet()
-        sheet = sh.worksheet("Results")
-        sheet.update([list(res_df.columns)] + res_df.values.tolist())
-        st.success("✅ Results saved to Google Sheets")
+        try:
+            sh = get_gsheet()
+            sheet = sh.worksheet("Results")
+            sheet.update([list(res_df.columns)] + res_df.values.tolist())
+            st.success("✅ Results saved to Google Sheets")
+        except Exception as e:
+            st.warning(f"⚠️ Failed to save to Sheets (quota or permission): {e}")
