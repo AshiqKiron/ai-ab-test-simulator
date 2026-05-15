@@ -6,6 +6,11 @@ A free, open-source tool for Product Managers, Engineers, and AI Researchers to 
 📦 **Stack**: Streamlit + Python + Google Sheets + Groq/OpenAI + SciPy  
 🆓 **Cost**: 100% free tier friendly (no credit card required)
 
+
+### Screenshot one - Empty state ![ss-1](ss-1.png)
+### Screenshot two - After running the a/b test ![ss-2](ss-2.png)
+
+
 ---
 
 ## 🎯 What This Project Does
