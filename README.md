@@ -140,7 +140,7 @@ client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/..."
 
 ## 3. Setup Google Sheets
 Create 4 tabs with exact headers:
-- **Test_Cases: **ID, Input_Text, Expected_Outcome, Ground_Truth_Score
+- **Test_Cases:** ID, Input_Text, Expected_Outcome, Ground_Truth_Score
 - **Prompts:** Prompt_ID, System_Prompt, User_Prompt_Template
 - **Rubric:** Dimension, Weight, Description
 - **Results:** (leave empty)
@@ -171,3 +171,16 @@ Create 4 tabs with exact headers:
 ## 📜 License & Contributing
 
 MIT License. Built for PMs, devs, and AI teams who believe prompt engineering deserves the same rigor as A/B testing UI.
+
+
+---
+
+### ✅ Next Steps
+1. Paste the **Task 1 table** into your `Test_Cases` tab (Row 1 onward)
+2. Replace your GitHub `README.md` with the **Task 2 content**
+3. Commit & push → Your repo now looks production-ready
+4. Run your first A/B test using the workflow guide
+
+You now have a **complete, documented, free-tier prompt testing pipeline** that directly demonstrates core PM skills: metric design, statistical validation, tradeoff communication, and systematic experimentation. 🎯
+
+Let me know if you want to add **confidence intervals**, **human-calibration scoring**, or **multi-LLM consensus judging** next.
